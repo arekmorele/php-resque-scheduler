@@ -10,7 +10,7 @@
 class ResqueScheduler
 {
 	const VERSION = "0.1";
-	
+
 	/**
 	 * Enqueue a job in a given number of seconds from now.
 	 *
@@ -21,10 +21,11 @@ class ResqueScheduler
 	 * @param string $queue The name of the queue to place the job in.
 	 * @param string $class The name of the class that contains the code to execute the job.
 	 * @param array $args Any optional arguments that should be passed when the job is executed.
+	 * @param boolean $trackStatus Set to true to be able to monitor the status of a job.
 	 */
-	public static function enqueueIn($in, $queue, $class, array $args = array())
+	public static function enqueueIn($in, $queue, $class, array $args = array(), $trackStatus = false)
 	{
-		self::enqueueAt(time() + $in, $queue, $class, $args);
+		self::enqueueAt(time() + $in, $queue, $class, $args, $trackStatus);
 	}
 
 	/**
@@ -38,14 +39,15 @@ class ResqueScheduler
 	 * @param string $queue The name of the queue to place the job in.
 	 * @param string $class The name of the class that contains the code to execute the job.
 	 * @param array $args Any optional arguments that should be passed when the job is executed.
+	 * @param boolean $trackStatus Set to true to be able to monitor the status of a job.
 	 */
-	public static function enqueueAt($at, $queue, $class, $args = array())
+	public static function enqueueAt($at, $queue, $class, $args = array(), $trackStatus = false)
 	{
 		self::validateJob($class, $queue);
 
-		$job = self::jobToHash($queue, $class, $args);
+		$job = self::jobToHash($queue, $class, $args, $trackStatus);
 		self::delayedPush($at, $job);
-		
+
 		Resque_Event::trigger('afterSchedule', array(
 			'at'    => $at,
 			'queue' => $queue,
@@ -144,21 +146,24 @@ class ResqueScheduler
 
         return $count;
     }
-	
+
 	/**
 	 * Generate hash of all job properties to be saved in the scheduled queue.
 	 *
 	 * @param string $queue Name of the queue the job will be placed on.
 	 * @param string $class Name of the job class.
 	 * @param array $args Array of job arguments.
+	 * @param boolean $trackStatus Track job status
+	 * @return array
 	 */
 
-	private static function jobToHash($queue, $class, $args)
+	private static function jobToHash($queue, $class, $args, $trackStatus)
 	{
 		return array(
 			'class' => $class,
 			'args'  => array($args),
 			'queue' => $queue,
+			'trackStatus' => $trackStatus,
 		);
 	}
 
@@ -194,7 +199,7 @@ class ResqueScheduler
 		if ($timestamp instanceof DateTime) {
 			$timestamp = $timestamp->getTimestamp();
 		}
-		
+
 		if ((int)$timestamp != $timestamp) {
 			throw new ResqueScheduler_InvalidTimestampException(
 				'The supplied timestamp value could not be converted to an integer.'
@@ -224,15 +229,15 @@ class ResqueScheduler
 		else {
 			$at = self::getTimestamp($at);
 		}
-	
+
 		$items = Resque::redis()->zrangebyscore('delayed_queue_schedule', '-inf', $at, array('limit' => array(0, 1)));
 		if (!empty($items)) {
 			return $items[0];
 		}
-		
+
 		return false;
-	}	
-	
+	}
+
 	/**
 	 * Pop a job off the delayed queue for a given timestamp.
 	 *
@@ -243,9 +248,9 @@ class ResqueScheduler
 	{
 		$timestamp = self::getTimestamp($timestamp);
 		$key = 'delayed:' . $timestamp;
-		
+
 		$item = json_decode(Resque::redis()->lpop($key), true);
-		
+
 		self::cleanupTimestamp($key, $timestamp);
 		return $item;
 	}
@@ -255,6 +260,7 @@ class ResqueScheduler
 	 *
 	 * @param string $class Name of job class.
 	 * @param string $queue Name of queue.
+	 * @return boolean
 	 * @throws Resque_Exception
 	 */
 	private static function validateJob($class, $queue)
@@ -265,7 +271,7 @@ class ResqueScheduler
 		else if (empty($queue)) {
 			throw new Resque_Exception('Jobs must be put in a queue.');
 		}
-		
+
 		return true;
 	}
 }
